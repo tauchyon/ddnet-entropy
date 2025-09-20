@@ -431,6 +431,9 @@ void CGameTeams::SetForceCharacterTeam(int ClientId, int Team)
 		}
 	}
 
+	if(!GameServer()->DetermineTuning(ClientId))
+		mem_copy(GameServer()->Tuning(ClientId), GameServer()->Tuning(Team, false), sizeof(CTuningParams));
+
 	m_Core.Team(ClientId, Team);
 
 	if(OldTeam != Team)
@@ -454,6 +457,8 @@ void CGameTeams::SetForceCharacterTeam(int ClientId, int Team)
 
 		ResetSwitchers(Team);
 	}
+
+	GameServer()->SendTuningParams(ClientId);
 }
 
 int CGameTeams::Count(int Team) const

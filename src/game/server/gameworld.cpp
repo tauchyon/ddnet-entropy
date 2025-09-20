@@ -383,7 +383,11 @@ void CGameWorld::ReleaseHooked(int ClientId)
 	}
 }
 
-CTuningParams *CGameWorld::Tuning()
+CTuningParams *CGameWorld::Tuning(int Index, bool IsClientId)
 {
-	return &m_Core.m_aTuning[0];
+	if(Index == -1) // get global
+		return &(m_Core.m_aTuning[0] = m_Core.m_pTeamTuning[0]);
+	if(!IsClientId)
+		return &(m_Core.m_aTuning[0] = m_Core.m_pTeamTuning[NUM_PLAYERTUNE + Index]);
+	return m_pGameServer->DetermineTuning(Index) ? &(m_Core.m_aTuning[0] = m_pTuningList[NUM_PLAYERTUNE + Index]) : &(m_Core.m_aTuning[0] = m_Core.m_pTeamTuning[m_pGameServer->GetDDRaceTeam(Index)]);
 }

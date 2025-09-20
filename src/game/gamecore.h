@@ -169,6 +169,7 @@ public:
 	}
 
 	CTuningParams m_aTuning[2];
+	CTuningParams *m_pTeamTuning;
 	class CCharacterCore *m_apCharacters[MAX_CLIENTS];
 	CPrng *m_pPrng;
 

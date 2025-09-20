@@ -193,7 +193,7 @@ public:
 	*/
 	std::vector<CCharacter *> IntersectedCharacters(vec2 Pos0, vec2 Pos1, float Radius, const CEntity *pNotThis = nullptr);
 
-	CTuningParams *Tuning();
+	CTuningParams *Tuning(int Index, bool IsClientID = true);
 
 	CTuningParams *m_pTuningList;
 	const CTuningParams *TuningList() const { return m_pTuningList; }

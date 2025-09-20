@@ -170,13 +170,178 @@ CGameContext::~CGameContext()
 	Destruct(m_Resetting ? RESET : NO_RESET);
 }
 
+bool CGameContext::DetermineTuning(int ClientId)
+{
+	if(!m_apPlayers[ClientId])
+		return false;	// ensure new player entered with base tuning
+	if(!g_Config.m_SvMultiTuning || g_Config.m_SvMultiTuning == 1)
+		return false;	// gloabal tuning and per-team tuning both use m_aTeamTuning
+	if(g_Config.m_SvMultiTuning == 2)
+		return true;	// per-player tuning only
+	if(g_Config.m_SvMultiTuning == 3)
+	{
+		CTuningParams *TuneBase = &m_aTeamTuning[0];
+		CTuningParams *TunePlayer = &m_aTuningList[NUM_PLAYERTUNE + ClientId];
+		CTuningParams *TuneTeam = &m_aTeamTuning[GetDDRaceTeam(ClientId)];
+		if(!mem_comp(TunePlayer, TuneTeam, sizeof(CTuningParams)))
+			return false;
+		else
+			return true;
+	}
+	else
+		throw;
+}
+
+CTuningParams *CGameContext::Tuning(int Index, bool IsClientId)
+{
+	if(Index == -1) // get global
+		return &m_aTeamTuning[0];
+	if(!IsClientId)
+		return &m_aTeamTuning[Index];
+	return DetermineTuning(Index) ? &m_aTuningList[NUM_PLAYERTUNE + Index] : &m_aTeamTuning[GetDDRaceTeam(Index)];
+}
+
+int CGameContext::TuningSetTeam(const char *pName, float Value, int Team, int Executor)
+{
+	if(g_Config.m_SvMultiTuning != 1 && g_Config.m_SvMultiTuning != 3)
+		return 1;
+	if(!CTuningParams::DEFAULT.Get(pName, nullptr))
+		return -1;
+	if(Team == -1)
+	{
+		if(Executor != -1 && Server()->GetAuthedState(Executor) < AUTHED_MOD)
+			return 2;
+		for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+			m_aTeamTuning[i].Set(pName, Value);
+		for(int i = 0; i < MAX_CLIENTS; i++)
+			m_aTuningList[NUM_PLAYERTUNE + i].Set(pName, Value);
+		SendTuningParams(-1);
+		char aMsg[256];
+		str_format(aMsg, sizeof(aMsg), "%s on server have been changed to %.2f globally", pName, Value);
+		SendChat(-1, TEAM_ALL, aMsg);
+		return 0;
+	}
+	if(!Team)
+	{
+		if(Executor != -1 && Server()->GetAuthedState(Executor) < AUTHED_MOD)
+			return 2;
+		float OValue;
+		m_aTeamTuning[0].Get(pName, &OValue);
+		m_aTeamTuning[0].Set(pName, Value);
+
+		float TValue;
+		if(g_Config.m_SvMultiTuning == 3)
+			for(int i = 0; i < MAX_CLIENTS; i++)
+				if(!m_apPlayers[i] || ( GetDDRaceTeam(i) == Team && Tuning(i)->Get(pName, &TValue) && TValue == OValue ))
+					Tuning(i)->Set(pName, Value);
+		CGameTeams *Teams = &m_pController->Teams();
+		for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+		{
+			if(Teams->GetTeamState(i) == ETeamState::EMPTY || (Tuning(Team, false)->Get(pName, &TValue) && TValue == OValue))
+			{
+				m_aTeamTuning[i].Set(pName, Value);
+				if(g_Config.m_SvMultiTuning == 3)
+					for(int j = 0; j < MAX_CLIENTS; j++)
+						if(m_apPlayers[j] || ( GetDDRaceTeam(j) == i && Tuning(j)->Get(pName, &TValue) && TValue == OValue ))
+							Tuning(j)->Set(pName, Value);
+			}
+		}
+		SendTuningParams(-1);
+		char aMsg[256];
+		str_format(aMsg, sizeof(aMsg), "Base tuning %s changed to %.2f by team0", pName, Value);
+		SendChat(-1, TEAM_ALL, aMsg);
+		return 0;
+	}
+	if(Team < 0 || Team > NUM_DDRACE_TEAMS)
+		return -2;
+	bool Authed = Executor != -1 && Server()->GetAuthedState(Executor) < AUTHED_MOD;
+	if(m_pController->Teams().TeamFlock(Team) && Authed)
+		return 2;
+	float OValue;
+	float TValue;
+	m_aTeamTuning[Team].Get(pName, &OValue);
+	m_aTeamTuning[Team].Set(pName, Value);
+	if(g_Config.m_SvMultiTuning == 3)
+		for(int i = 0; i < MAX_CLIENTS; i++)
+			if(m_apPlayers[i] && GetDDRaceTeam(i) == Team && Tuning(i)->Get(pName, &TValue) && TValue == OValue)
+				Tuning(i)->Set(pName, Value);
+	SendTuningParams(-1);
+	char aMsg[256];
+	str_format(aMsg, sizeof(aMsg), "%s of your team changed to %.2f (%s)", pName, Value, Authed ? "server" : Server()->ClientName(Executor));
+	SendChatTeam(Team, aMsg);
+	return 0;
+}
+
+int CGameContext::TuningSetPlayer(const char *pName, float Value, int Cid, bool Let)
+{
+	if(g_Config.m_SvMultiTuning < 2)
+		return 1;
+	if(!CTuningParams::DEFAULT.Get(pName, nullptr))
+		return -1;
+	if(Cid == -1)
+		for(int i = 0; i < MAX_CLIENTS; i++)
+			if(m_aTuningList[NUM_PLAYERTUNE + Cid].Set(pName, Value) && m_apPlayers[Cid])
+			{
+				SendTuningParams(Cid);
+				char aMsg[256];
+				str_format(aMsg, sizeof(aMsg), "Your %s changed to %.2f %s", pName, Value, Let ? "(server)" : "");
+				SendChatTarget(Cid, aMsg);
+			}
+	if(!m_apPlayers[Cid])
+		return -2;
+	if(m_aTuningList[NUM_PLAYERTUNE + Cid].Set(pName, Value))
+	{
+		SendTuningParams(Cid);
+		char aMsg[256];
+		str_format(aMsg, sizeof(aMsg), "Your %s changed to %.2f %s", pName, Value, Let ? "(server)" : "");
+		SendChatTarget(Cid, aMsg);
+	}
+	return 0;
+}
+
+void CGameContext::CopyToBase(const CTuningParams *pTuning)
+{
+	mem_copy(m_aTeamTuning, pTuning, sizeof(CTuningParams));
+	for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+		if(m_pController->Teams().GetTeamState(i) == ETeamState::EMPTY)
+		{
+			mem_copy(&m_aTeamTuning[i], pTuning, sizeof(CTuningParams));
+			for(int j = 0; j < MAX_CLIENTS; j++)
+				if(!m_apPlayers[j] || ( GetDDRaceTeam(j) == i && !DetermineTuning(j) ))
+					mem_copy(&m_aTuningList[NUM_PLAYERTUNE + j], &m_aTeamTuning[i], sizeof(CTuningParams));
+		}
+	SendTuningParams(-1);
+	SendChat(-1, TEAM_ALL, "Base tuning have been changed entirely by server");
+}
+
+bool CGameContext::TuningSet(const char *pName, float Value)
+{
+	for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+		m_aTeamTuning[i].Set(pName, Value);
+	for(int i = NUM_PLAYERTUNE; i < NUM_TUNEZONES; i++)
+		m_aTuningList[i].Set(pName, Value);
+	SendTuningParams(-1);
+	return true;
+}
+
+void CGameContext::TuningSetDefault(bool TeamOnly)
+{
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		if(!TeamOnly || !m_apPlayers[i] || !mem_comp(Tuning(i), Tuning(GetDDRaceTeam(i), false), sizeof(CTuningParams)))
+			m_aTuningList[NUM_PLAYERTUNE + i] = CTuningParams::DEFAULT;
+	for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+		m_aTeamTuning[i] = CTuningParams::DEFAULT;
+	SendTuningParams(-1);
+}
+
 void CGameContext::Clear()
 {
 	CHeap *pVoteOptionHeap = m_pVoteOptionHeap;
 	CVoteOptionServer *pVoteOptionFirst = m_pVoteOptionFirst;
 	CVoteOptionServer *pVoteOptionLast = m_pVoteOptionLast;
 	int NumVoteOptions = m_NumVoteOptions;
-	CTuningParams Tuning = m_Tuning;
+	CTuningParams Tunings[NUM_DDRACE_TEAMS];
+	mem_copy(Tunings, m_aTeamTuning, sizeof(m_aTeamTuning));
 	CMutes Mutes = m_Mutes;
 	CMutes VoteMutes = m_VoteMutes;
 
@@ -188,7 +353,7 @@ void CGameContext::Clear()
 	m_pVoteOptionFirst = pVoteOptionFirst;
 	m_pVoteOptionLast = pVoteOptionLast;
 	m_NumVoteOptions = NumVoteOptions;
-	m_Tuning = Tuning;
+	mem_copy(m_aTeamTuning, Tunings, sizeof(m_aTeamTuning));
 	m_Mutes = Mutes;
 	m_VoteMutes = VoteMutes;
 }
@@ -332,7 +497,7 @@ void CGameContext::CreateExplosion(vec2 Pos, int Owner, int Weapon, bool NoDamag
 		l = 1 - std::clamp((l - InnerRadius) / (Radius - InnerRadius), 0.0f, 1.0f);
 		float Strength;
 		if(Owner == -1 || !m_apPlayers[Owner] || !m_apPlayers[Owner]->m_TuneZone)
-			Strength = Tuning()->m_ExplosionStrength;
+			Strength = Tuning(Owner)->m_ExplosionStrength;
 		else
 			Strength = TuningList()[m_apPlayers[Owner]->m_TuneZone].m_ExplosionStrength;
 
@@ -928,10 +1093,10 @@ void CGameContext::CheckPureTuning()
 		str_comp(m_pController->m_pGameType, "TDM") == 0 ||
 		str_comp(m_pController->m_pGameType, "CTF") == 0)
 	{
-		if(mem_comp(&CTuningParams::DEFAULT, &m_Tuning, sizeof(CTuningParams)) != 0)
+		if(mem_comp(&CTuningParams::DEFAULT, Tuning(-1), sizeof(CTuningParams)) != 0)
 		{
 			Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "server", "resetting tuning due to pure server");
-			m_Tuning = CTuningParams::DEFAULT;
+			TuningSetDefault();
 		}
 	}
 }
@@ -963,11 +1128,11 @@ void CGameContext::SendTuningParams(int ClientId, int Zone)
 	CMsgPacker Msg(NETMSGTYPE_SV_TUNEPARAMS);
 	int *pParams = nullptr;
 	if(Zone == 0)
-		pParams = (int *)&m_Tuning;
+		pParams = (int *)Tuning(ClientId);
 	else
 		pParams = (int *)&(m_aTuningList[Zone]);
 
-	for(unsigned i = 0; i < sizeof(m_Tuning) / sizeof(int); i++)
+	for(unsigned i = 0; i < sizeof(CTuningParams) / sizeof(int); i++)
 	{
 		if(m_apPlayers[ClientId] && m_apPlayers[ClientId]->GetCharacter())
 		{
@@ -1053,8 +1218,11 @@ void CGameContext::OnTick()
 		m_TeeHistorian.BeginPlayers();
 	}
 
-	// copy tuning
-	m_World.m_Core.m_aTuning[0] = m_Tuning;
+	if(m_prevMultiTuning != g_Config.m_SvMultiTuning)
+	{
+		ResetTuning();
+		m_prevMultiTuning = g_Config.m_SvMultiTuning;
+	}
 	m_World.Tick();
 
 	UpdatePlayerMaps();
@@ -2943,56 +3111,198 @@ void CGameContext::ConTuneParam(IConsole::IResult *pResult, void *pUserData)
 	const char *pParamName = pResult->GetString(0);
 
 	char aBuf[256];
-	if(pResult->NumArguments() == 2)
+	if(pResult->NumArguments() >= 3)
 	{
 		float NewValue = pResult->GetFloat(1);
-		if(pSelf->Tuning()->Set(pParamName, NewValue) && pSelf->Tuning()->Get(pParamName, &NewValue))
+		int Index = pResult->GetInteger(2);
+		if(Index == -2)
+			Index = pResult->m_ClientId;
+		int code;
+
+		if(g_Config.m_SvMultiTuning == 3)
 		{
-			str_format(aBuf, sizeof(aBuf), "%s changed to %.2f", pParamName, NewValue);
-			pSelf->SendTuningParams(-1);
+			const char *pType;
+			try
+			{
+				pType = pResult->GetString(3);
+			}
+			catch(const std::exception &)
+			{
+				pType = "";
+			}
+			if(pType[0] == 'p')
+			{
+				code = pSelf->TuningSetPlayer(pParamName, NewValue, Index, true);
+				str_format(aBuf, sizeof(aBuf), "%s of player %i changed to %.2f", pParamName, Index, NewValue);
+			}
+			else if(pType[0] == 't')
+			{
+				code = pSelf->TuningSetTeam(pParamName, NewValue, Index);
+				str_format(aBuf, sizeof(aBuf), "%s of team %i changed to %.2f", pParamName, Index, NewValue);
+			}
+			else
+			{
+				str_format(aBuf, sizeof(aBuf), "Invalid targeting mode: %s", pType);
+				pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+				return;
+			}
+			switch(code)
+			{
+			case -1:
+				str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
+				break;
+			case -2:
+				str_format(aBuf, sizeof(aBuf), "Invalid index: %i (Out-range or not exist)", Index);
+				break;
+			case 0:
+				break;	// continue
+			case 1:
+			case 2:
+				throw "Unexpected result";
+			default:
+				break;
+			}
 		}
 		else
 		{
-			str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
+			if(g_Config.m_SvMultiTuning == 1)
+			{
+				code = pSelf->TuningSetTeam(pParamName, NewValue, Index);
+				str_format(aBuf, sizeof(aBuf), "%s of team %i changed to %.2f", pParamName, Index, NewValue);
+			}
+			else
+			{
+				code = pSelf->TuningSetPlayer(pParamName, NewValue, Index, true);
+				str_format(aBuf, sizeof(aBuf), "%s of player %i changed to %.2f", pParamName, Index, NewValue);
+			}
+
+			switch(code)
+			{
+			case -1:
+				str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
+				break;
+			case -2:
+				str_format(aBuf, sizeof(aBuf), "Invalid index: %i (Out-range or not exist)", Index);
+				break;
+			case 0:
+				break; // continue
+			case 1:
+			case 2:
+				throw "Unexpected result";
+			default:
+				break;
+			}
 		}
+
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+	}
+	else if(pResult->NumArguments() == 2)
+	{
+		float NewValue = pResult->GetFloat(1);
+		int code = pSelf->TuningSetTeam(pParamName, NewValue, -1);
+		str_format(aBuf, sizeof(aBuf), "All %s changed to %.2f", pParamName, NewValue);
+
+		switch(code)
+		{
+		case -1:
+			str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
+			break;
+		case 0:
+			break; // continue
+		case 1:
+		case 2:
+		case -2:
+			throw "Unexpected result";
+		default:
+			break;
+		}
+
+		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
 	}
 	else
 	{
-		float Value;
-		if(pSelf->Tuning()->Get(pParamName, &Value))
+		if(!str_comp_nocase(pParamName, "copy"))
 		{
-			str_format(aBuf, sizeof(aBuf), "%s %.2f", pParamName, Value);
+			pSelf->CopyToBase(pSelf->Tuning(pResult->m_ClientId));
+			return;
 		}
+
+		float Value;
+
+		if(pSelf->Tuning(-1)->Get(pParamName, &Value))
+			str_format(aBuf, sizeof(aBuf), "%s %.2f", pParamName, Value);
 		else
 		{
 			str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+			return;
+		}
+
+		if(!g_Config.m_SvMultiTuning)
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+		else
+		{
+			float DValue;
+			CTuningParams::DEFAULT.Get(pParamName, &DValue);
+			float TValue;
+
+			str_format(aBuf, sizeof(aBuf), "%s: base %.2f (<- %.2f), diff (%s): ", pParamName, Value, DValue, g_Config.m_SvMultiTuning == 1 ? "teams" :
+				g_Config.m_SvMultiTuning == 2 ? "players" : "mixed");
+			pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+			switch(g_Config.m_SvMultiTuning)
+			{
+			case 1:
+				for(int Team = 0; Team < NUM_DDRACE_TEAMS; Team++)
+				{
+					if(pSelf->Tuning(Team, false)->Get(pParamName, &TValue) && TValue != Value)
+					{
+						str_format(aBuf, sizeof(aBuf), "    team %i: %.2f", Team, TValue);
+						pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+					}
+				}
+				break;
+			case 2:
+				for(int Player = 0; Player < MAX_CLIENTS; Player++)
+				{
+					if(pSelf->m_apPlayers[Player] && pSelf->Tuning(Player)->Get(pParamName, &TValue) && TValue != Value)
+					{
+						str_format(aBuf, sizeof(aBuf), "        player %i (%s): %.2f", Player, pSelf->Server()->ClientName(Player), TValue);
+						pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+					}
+				}
+				break;
+			case 3:
+				for(int Player0 = 0; Player0 < MAX_CLIENTS; Player0++)
+				{
+					if(pSelf->m_apPlayers[Player0] && pSelf->GetDDRaceTeam(Player0) == 0 && pSelf->Tuning(Player0)->Get(pParamName, &TValue) && TValue != Value)
+					{
+						str_format(aBuf, sizeof(aBuf), "        player %i (%s): %.2f", Player0, pSelf->Server()->ClientName(Player0), TValue);
+						pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+					}
+				}
+				for(int Team = 0; Team < NUM_DDRACE_TEAMS; Team++)
+				{
+					for(int Player = 0; Player < MAX_CLIENTS; Player++)
+					{
+						float FValue;
+						if(pSelf->m_apPlayers[Player] && pSelf->GetDDRaceTeam(Player) == Team && pSelf->Tuning(Player)->Get(pParamName, &FValue) && FValue != TValue)
+						{
+							str_format(aBuf, sizeof(aBuf), "    team %i -> player %i (%s): %.2f (Override)", pSelf->GetDDRaceTeam(Player), Player, pSelf->Server()->ClientName(Player), FValue);
+							pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+						}
+					}
+					if((pSelf->Tuning(Team, false)->Get(pParamName, &TValue) && TValue != Value))
+					{
+						str_format(aBuf, sizeof(aBuf), "        team %i: %.2f %s", Team, TValue, pSelf->m_pController->Teams().TeamFlock(Team) ? "" : "(team0mode)");
+						pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+					}
+				}
+				break;
+			default:
+				break;
+			}
 		}
 	}
-	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
-}
-
-void CGameContext::ConToggleTuneParam(IConsole::IResult *pResult, void *pUserData)
-{
-	CGameContext *pSelf = (CGameContext *)pUserData;
-	const char *pParamName = pResult->GetString(0);
-	float OldValue;
-
-	char aBuf[256];
-	if(!pSelf->Tuning()->Get(pParamName, &OldValue))
-	{
-		str_format(aBuf, sizeof(aBuf), "No such tuning parameter: %s", pParamName);
-		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
-		return;
-	}
-
-	float NewValue = absolute(OldValue - pResult->GetFloat(1)) < 0.0001f ? pResult->GetFloat(2) : pResult->GetFloat(1);
-
-	pSelf->Tuning()->Set(pParamName, NewValue);
-	pSelf->Tuning()->Get(pParamName, &NewValue);
-
-	str_format(aBuf, sizeof(aBuf), "%s changed to %.2f", pParamName, NewValue);
-	pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
-	pSelf->SendTuningParams(-1);
 }
 
 void CGameContext::ConTuneReset(IConsole::IResult *pResult, void *pUserData)
@@ -3004,7 +3314,7 @@ void CGameContext::ConTuneReset(IConsole::IResult *pResult, void *pUserData)
 		float DefaultValue = 0.0f;
 		char aBuf[256];
 
-		if(CTuningParams::DEFAULT.Get(pParamName, &DefaultValue) && pSelf->Tuning()->Set(pParamName, DefaultValue) && pSelf->Tuning()->Get(pParamName, &DefaultValue))
+		if(CTuningParams::DEFAULT.Get(pParamName, &DefaultValue) && pSelf->TuningSet(pParamName, DefaultValue) && pSelf->Tuning(-1)->Get(pParamName, &DefaultValue))
 		{
 			str_format(aBuf, sizeof(aBuf), "%s reset to %.2f", pParamName, DefaultValue);
 			pSelf->SendTuningParams(-1);
@@ -3022,16 +3332,562 @@ void CGameContext::ConTuneReset(IConsole::IResult *pResult, void *pUserData)
 	}
 }
 
-void CGameContext::ConTunes(IConsole::IResult *pResult, void *pUserData)
+void CGameContext::ConTuneResetChat(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	int ClientId = pResult->m_ClientId;
+
+	if(g_Config.m_SvMultiTuning == 3)
+	{
+		const char *pType;
+		try
+		{
+			pType = pResult->GetString(0);
+		}
+		catch(const std::exception &)
+		{
+			pType = "";
+		}
+		if(pType[0] == 'p')
+		{
+			mem_copy(&pSelf->m_aTuningList[NUM_PLAYERTUNE + ClientId], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+			pSelf->SendChatTarget(ClientId, "Tuning reset to default");
+
+			pSelf->SendTuningParams(ClientId);
+		}
+		else if(pType[0] == 't')
+		{
+			int Team = pSelf->GetDDRaceTeam(ClientId);
+			if(!Team)
+			{
+				if(pSelf->Server()->GetAuthedState(ClientId) <= AUTHED_MOD)
+					pSelf->SendChatTeam(Team, "Your are not allowed to change server base tuning");
+				else
+					pSelf->CopyToBase(&CTuningParams::DEFAULT);
+				return;
+			}
+			mem_copy(&pSelf->m_aTeamTuning[Team], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+
+			char aMsg[256];
+			str_format(aMsg, sizeof(aMsg), "Your team's tuning have been reset to default by %s", pSelf->Server()->ClientName(ClientId));
+			pSelf->SendChatTeam(Team, aMsg);
+
+			pSelf->SendTuningParams(-1);
+		}
+		else
+		{
+			if(pType == "")
+				pSelf->SendChatTarget(ClientId, "Targeting mode requied (\"team\"\\\"player\")");
+			else
+			{
+				char aMsg[256];
+
+				str_format(aMsg, sizeof(aMsg), "Invalid target mode: %s", pType);
+				pSelf->SendChatTarget(ClientId, aMsg);
+			}
+			return;
+		}
+	}
+	else if(g_Config.m_SvMultiTuning == 2)
+	{
+		mem_copy(&pSelf->m_aTuningList[NUM_PLAYERTUNE + ClientId], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+		pSelf->SendChatTarget(ClientId, "Tuning reset to default");
+
+		pSelf->SendTuningParams(ClientId);
+	}
+	else if(g_Config.m_SvMultiTuning == 1)
+	{
+		int Team = pSelf->GetDDRaceTeam(ClientId);
+		if(!Team)
+		{
+			if(pSelf->Server()->GetAuthedState(ClientId) <= AUTHED_MOD)
+				pSelf->SendChatTeam(Team, "Your are not allowed to change server base tuning");
+			else
+				pSelf->CopyToBase(&CTuningParams::DEFAULT);
+			return;
+		}
+		mem_copy(&pSelf->m_aTeamTuning[Team], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+
+		char aMsg[256];
+		str_format(aMsg, sizeof(aMsg), "Your team's tuning have been reset to default by %s", pSelf->Server()->ClientName(ClientId));
+		pSelf->SendChatTeam(Team, aMsg);
+
+		pSelf->SendTuningParams(-1);
+	}
+	else
+	{
+		pSelf->SendChatTarget(ClientId, "Multi-tuning is disabled on server");
+	}
+}
+
+void CGameContext::ConTuneDump(IConsole::IResult *pResult, void *pUserData)
 {
 	CGameContext *pSelf = (CGameContext *)pUserData;
 	char aBuf[256];
-	for(int i = 0; i < CTuningParams::Num(); i++)
+	for(int TuningParam = 0; TuningParam < CTuningParams::Num(); TuningParam++)
 	{
 		float Value;
-		pSelf->Tuning()->Get(i, &Value);
-		str_format(aBuf, sizeof(aBuf), "%s %.2f", CTuningParams::Name(i), Value);
+		float TValue;
+		float DValue;
+		CTuningParams::DEFAULT.Get(TuningParam, &DValue);
+
+		pSelf->Tuning(-1)->Get(TuningParam, &Value);
+		str_format(aBuf, sizeof(aBuf), "%s: base %2f (<- %.2f), diff (%s): ", CTuningParams::Name(TuningParam), Value, DValue,
+			g_Config.m_SvMultiTuning == 1 ? "teams" : g_Config.m_SvMultiTuning == 2 ? "players" : "mixed");
 		pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+
+		switch(g_Config.m_SvMultiTuning)
+		{
+		case 1:
+			for(int Team = 0; Team < NUM_DDRACE_TEAMS; Team++)
+			{
+				if(pSelf->Tuning(Team, false)->Get(TuningParam, &TValue) && TValue != Value)
+				{
+					str_format(aBuf, sizeof(aBuf), "    team %i: %.2f", Team, TValue);
+					pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+				}
+			}
+			break;
+		case 2:
+			for(int Player = 0; Player < MAX_CLIENTS; Player++)
+			{
+				if(pSelf->m_apPlayers[Player] && pSelf->Tuning(Player)->Get(TuningParam, &TValue) && TValue != Value)
+				{
+					str_format(aBuf, sizeof(aBuf), "        player %i (%s): %.2f", Player, pSelf->Server()->ClientName(Player), TValue);
+					pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+				}
+			}
+			break;
+		case 3:
+			for(int Player0 = 0; Player0 < MAX_CLIENTS; Player0++)
+			{
+				if(pSelf->m_apPlayers[Player0] && pSelf->GetDDRaceTeam(Player0) == 0 && pSelf->Tuning(Player0)->Get(TuningParam, &TValue) && TValue != Value)
+				{
+					str_format(aBuf, sizeof(aBuf), "    player %i (%s): %.2f", Player0, pSelf->Server()->ClientName(Player0), TValue);
+					pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+				}
+			}
+			for(int Team = 0; Team < NUM_DDRACE_TEAMS; Team++)
+			{
+				for(int Player = 0; Player < MAX_CLIENTS; Player++)
+				{
+					float FValue;
+					if(pSelf->m_apPlayers[Player] && pSelf->GetDDRaceTeam(Player) == Team && pSelf->Tuning(Player)->Get(TuningParam, &FValue) && FValue != TValue)
+					{
+						str_format(aBuf, sizeof(aBuf), "        team %i -> player %i (%s): %.2f (Override)", pSelf->GetDDRaceTeam(Player), Player, pSelf->Server()->ClientName(Player), FValue);
+						pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+					}
+				}
+				if((pSelf->Tuning(Team, false)->Get(TuningParam, &TValue) && TValue != Value))
+				{
+					str_format(aBuf, sizeof(aBuf), "        team %i: %.2f %s", Team, TValue, pSelf->m_pController->Teams().TeamFlock(Team) ? "" : "(team0mode)");
+					pSelf->Console()->Print(IConsole::OUTPUT_LEVEL_STANDARD, "tuning", aBuf);
+				}
+			}
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void CGameContext::ConTuneChat(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	const char *pParamName = pResult->GetString(0);
+
+	int ClientId = pResult->m_ClientId;
+	int Team = pSelf->GetDDRaceTeam(ClientId);
+
+	char aMsg[256];
+	if(pResult->NumArguments() >= 2)
+	{
+		float NewValue = pResult->GetFloat(1);
+		int code = 1;
+		const char *pType;
+		switch(g_Config.m_SvMultiTuning)
+		{
+		case 1:
+			code = pSelf->TuningSetTeam(pParamName, NewValue, Team, ClientId);
+			break;
+		case 2:
+			code = pSelf->TuningSetPlayer(pParamName, NewValue, ClientId);
+			break;
+		case 3:
+			try
+			{
+				pType = pResult->GetString(2);
+			}
+			catch(const std::exception &)
+			{
+				pType = "";
+			}
+			if(pType[0] == 'p')
+				code = pSelf->TuningSetPlayer(pParamName, NewValue, ClientId);
+			else if(pType[0] == 't')
+				code = pSelf->TuningSetTeam(pParamName, NewValue, Team, ClientId);
+			else
+			{
+				if(pType == "")
+					pSelf->SendChatTarget(ClientId, "Targeting mode requied (\"team\"\\\"player\")");
+				else
+				{
+					str_format(aMsg, sizeof(aMsg), "Invalid target mode: %s", pType);
+					pSelf->SendChatTarget(ClientId, aMsg);
+				}
+				return;
+			}
+		default:
+			break;
+		}
+		switch(code)
+		{
+		case -1:
+			str_format(aMsg, sizeof(aMsg), "No such tuning parameter: %s", pParamName);
+			pSelf->SendChatTarget(ClientId, aMsg);
+			return;
+		case 1:
+			pSelf->SendChatTarget(ClientId, "Multi-tuning is currently disabled on server");
+			return;
+		case 2:
+			pSelf->SendChatTarget(ClientId, "You are not allowed to adjust tunings under team0(mode)");
+			return;
+		case -2:
+			throw "Unexpected result";
+		default:
+			break;
+		}
+	}
+	else
+	{
+		float Value;
+		if(!CTuningParams::DEFAULT.Get(pParamName, nullptr))
+		{
+			str_format(aMsg, sizeof(aMsg), "No such tuning parameter: %s", pParamName);
+			pSelf->SendChatTarget(ClientId, aMsg);
+			return;
+		}
+		switch(g_Config.m_SvMultiTuning)
+		{
+		case 0:
+			if(pSelf->Tuning(-1)->Get(pParamName, &Value))
+				str_format(aMsg, sizeof(aMsg), "%s: %.2f (global)", pParamName, Value);
+			break;
+		case 1:
+			if(pSelf->Tuning(Team, false)->Get(pParamName, &Value))
+				str_format(aMsg, sizeof(aMsg), "%s: %.2f (team %i)", pParamName, Value, Team);
+			break;
+		case 2:
+			if(pSelf->Tuning(ClientId)->Get(pParamName, &Value))
+				str_format(aMsg, sizeof(aMsg), "%s: %.2f (player %i)", pParamName, Value, ClientId);
+			break;
+		case 3:
+			if(pSelf->DetermineTuning(ClientId))
+			{
+				float TValue;
+				pSelf->Tuning(ClientId)->Get(pParamName, &Value);
+				pSelf->Tuning(Team, false)->Get(pParamName, &TValue);
+				str_format(aMsg, sizeof(aMsg), "%s: (%.2f) -> %.2f (overrided)", pParamName, TValue, Value);
+			}
+			else
+			{
+				float DValue;
+				pSelf->Tuning(-1)->Get(pParamName, &DValue);
+				pSelf->Tuning(Team, false)->Get(pParamName, &Value);
+				if(DValue == Value)
+					str_format(aMsg, sizeof(aMsg), "%s: -> %.2f (follow base)", pParamName, Value);
+				else
+					str_format(aMsg, sizeof(aMsg), "%s: -> %.2f (follow team %i)", pParamName, Value, Team);
+			}
+			break;
+		default:
+			break;
+		}
+		pSelf->SendChatTarget(ClientId, aMsg);
+	}
+}
+
+void CGameContext::ConTuneCopy(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+	int ClientId = pResult->m_ClientId;
+	int Team = pSelf->GetDDRaceTeam(ClientId);
+	if(!g_Config.m_SvMultiTuning)
+	{
+		pSelf->SendChatTarget(ClientId, "Multi-tuning is disabled on this server");
+		return;
+	}
+
+	if(pResult->NumArguments() == 0)
+	{
+		switch(g_Config.m_SvMultiTuning)
+		{
+		case 1:
+			mem_copy(pSelf->Tuning(Team, false), pSelf->Tuning(-1),sizeof(CTuningParams));
+
+			char aMsg[256];
+			str_format(aMsg, sizeof(aMsg), "Your team's tuning have synced with base tuning by %s", pSelf->Server()->ClientName(ClientId));
+			pSelf->SendChatTeam(Team, aMsg);
+			pSelf->SendTuningParams(-1);
+			break;
+		case 2:
+			mem_copy(pSelf->Tuning(ClientId), pSelf->Tuning(-1), sizeof(CTuningParams));
+			pSelf->SendChatTarget(ClientId, "Tuning synced with base tuning");
+			pSelf->SendTuningParams(ClientId);
+			break;
+		case 3:
+			mem_copy(pSelf->Tuning(ClientId), pSelf->Tuning(Team, false), sizeof(CTuningParams));
+			pSelf->SendChatTarget(ClientId, "Tuning synced with your team tuning");
+			pSelf->SendTuningParams(ClientId);
+			break;
+		default:
+			break;
+		}
+
+	}
+	else if(pResult->NumArguments() == 1)
+	{
+		const char *pParamName = pResult->GetString(0);
+		float Value;
+		if(!CTuningParams::DEFAULT.Get(pParamName,nullptr))
+		{
+			char aMsg[256];
+			str_format(aMsg, sizeof(aMsg), "No such tuning parameter: %s", pParamName);
+			pSelf->SendChatTarget(ClientId, aMsg);
+			return;
+		}
+		switch(g_Config.m_SvMultiTuning)
+		{
+		case 1:
+			if(pSelf->Tuning(-1)->Get(pParamName, &Value))
+			{
+				pSelf->Tuning(Team, false)->Set(pParamName, Value);
+
+				char aMsg[256];
+				str_format(aMsg, sizeof(aMsg), "%s of your team have been synced with base (-> %.2f)", pParamName, Value);
+				pSelf->SendChatTeam(Team, aMsg);
+
+				pSelf->SendTuningParams(-1);
+			}
+			break;
+		case 2:
+			if(pSelf->Tuning(-1)->Get(pParamName, &Value))
+			{
+				pSelf->Tuning(ClientId)->Set(pParamName, Value);
+
+				char aMsg[256];
+				str_format(aMsg, sizeof(aMsg), "Tuning %s synced with base tuning (-> %.2f)", pParamName, Value);
+				pSelf->SendChatTarget(ClientId, aMsg);
+
+				pSelf->SendTuningParams(ClientId);
+			}
+			break;
+		case 3:
+			if(pSelf->Tuning(Team, false)->Get(pParamName, &Value))
+			{
+				pSelf->Tuning(ClientId)->Set(pParamName, Value);
+
+				char aMsg[256];
+				str_format(aMsg, sizeof(aMsg), "Tuning %s synced with your team tuning (-> %.2f)", pParamName, Value);
+				pSelf->SendChatTarget(ClientId, aMsg);
+
+				pSelf->SendTuningParams(ClientId);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	else
+	{
+		const char *pParamName = pResult->GetString(0);
+		int Index = pResult->GetInteger(1);
+
+		if(Index < 0 || Index > MAX_CLIENTS || (Index > NUM_DDRACE_TEAMS && g_Config.m_SvMultiTuning == 1))
+		{
+			char aMsg[256];
+			str_format(aMsg, sizeof(aMsg), "Invalid index: %i (Out-range)", Index);
+			pSelf->SendChatTarget(ClientId, aMsg);
+			return;
+		}
+
+		const char *pType;
+		char aMsg[256];
+		if(!str_comp(pParamName, "all"))
+		{
+			switch(g_Config.m_SvMultiTuning)
+			{
+			case 1:
+				if(pSelf->m_pController->Teams().GetTeamState(Index) == ETeamState::EMPTY)
+				{
+					char aMsg[256];
+					str_format(aMsg, sizeof(aMsg), "Copying canceled because team %i is empty", Index);
+					pSelf->SendChatTarget(ClientId, aMsg);
+					return;
+				}
+				mem_copy(pSelf->Tuning(Team, false), pSelf->Tuning(Index, false), sizeof(CTuningParams));
+
+				str_format(aMsg, sizeof(aMsg), "Your team's tuning have synced with team %i by %s", Index, pSelf->Server()->ClientName(ClientId));
+				pSelf->SendChatTeam(Team, aMsg);
+
+				pSelf->SendTuningParams(-1);
+				break;
+			case 2:
+				if(!pSelf->m_apPlayers[Index])
+				{
+					str_format(aMsg, sizeof(aMsg), "Player %i not exists", Index);
+					pSelf->SendChatTarget(ClientId, aMsg);
+					return;
+				}
+				mem_copy(pSelf->Tuning(ClientId), pSelf->Tuning(Index), sizeof(CTuningParams));
+
+				str_format(aMsg, sizeof(aMsg), "Tuning synced with player %i (%s) tuning", Index, pSelf->Server()->ClientName(Index));
+				pSelf->SendChatTarget(ClientId, aMsg);
+
+				pSelf->SendTuningParams(ClientId);
+				break;
+			case 3:
+				try
+				{
+					pType = pResult->GetString(2);
+				}
+				catch(const std::exception &)
+				{
+					pType = "";
+				}
+				if(pType[0] == 'p')
+				{
+					mem_copy(pSelf->Tuning(Team, false), pSelf->Tuning(Index, false), sizeof(CTuningParams));
+
+					str_format(aMsg, sizeof(aMsg), "Your team's tuning have synced with team %i by %s", Index, pSelf->Server()->ClientName(ClientId));
+					pSelf->SendChatTeam(Team, aMsg);
+
+					pSelf->SendTuningParams(-1);
+				}
+				else if(pType[0] == 't')
+				{
+					mem_copy(pSelf->Tuning(Team, false), pSelf->Tuning(Index, false), sizeof(CTuningParams));
+
+					str_format(aMsg, sizeof(aMsg), "Your team's tuning have synced with team %i by %s", Index, pSelf->Server()->ClientName(ClientId));
+					pSelf->SendChatTeam(Team, aMsg);
+
+					pSelf->SendTuningParams(ClientId);
+				}
+				else
+				{
+					if(pType == "")
+						pSelf->SendChatTarget(ClientId, "Targeting mode requied (\"team\"\\\"player\")");
+					else
+					{
+						str_format(aMsg, sizeof(aMsg), "Invalid target mode: %s", pType);
+						pSelf->SendChatTarget(ClientId, aMsg);
+					}
+					return;
+				}
+				break;
+			default:
+				break;
+			}
+		}
+		else
+		{
+			float Value;
+
+			if(!CTuningParams::DEFAULT.Get(pParamName, nullptr))
+			{
+				str_format(aMsg, sizeof(aMsg), "No such tuning parameter: %s", pParamName);
+				pSelf->SendChatTarget(ClientId, aMsg);
+				return;
+			}
+			
+			switch(g_Config.m_SvMultiTuning)
+			{
+			case 1:
+				if(pSelf->m_pController->Teams().GetTeamState(Index) == ETeamState::EMPTY)
+				{
+					str_format(aMsg, sizeof(aMsg), "Copying canceled because team %i is empty", Index);
+					pSelf->SendChatTarget(ClientId, aMsg);
+					return;
+				}
+				if(pSelf->Tuning(Index, false)->Get(pParamName, &Value) && pSelf->Tuning(Team, false)->Set(pParamName, Value))
+				{
+					str_format(aMsg, sizeof(aMsg), "%s of your team have been synced with team %i by %s (-> %.2f)", pParamName, Index, pSelf->Server()->ClientName(ClientId), Value);
+					pSelf->SendChatTeam(Team, aMsg);
+
+					pSelf->SendTuningParams(-1);
+				}
+				break;
+			case 2:
+				if(!pSelf->m_apPlayers[Index])
+				{
+					str_format(aMsg, sizeof(aMsg), "Player %i not exists", Index);
+					pSelf->SendChatTarget(ClientId, aMsg);
+					return;
+				}
+				if(pSelf->Tuning(Index)->Get(pParamName, &Value) && pSelf->Tuning(ClientId)->Set(pParamName, Value))
+				{
+					str_format(aMsg, sizeof(aMsg), "Tuning %s synced with player %i (%s) (-> %.2f)", pParamName, Index, pSelf->Server()->ClientName(ClientId), Value);
+					pSelf->SendChatTarget(ClientId, aMsg);
+
+					pSelf->SendTuningParams(ClientId);
+				}
+				break;
+			case 3:
+				try
+				{
+					pType = pResult->GetString(2);
+				}
+				catch(const std::exception &)
+				{
+					pType = "";
+				}
+				if(pType[0] == 'p')
+				{
+					if(!pSelf->m_apPlayers[Index])
+					{
+						str_format(aMsg, sizeof(aMsg), "Player %i not exists", Index);
+						pSelf->SendChatTarget(ClientId, aMsg);
+						return;
+					}
+					if(pSelf->Tuning(Index)->Get(pParamName, &Value) && pSelf->Tuning(ClientId)->Set(pParamName, Value))
+					{
+						str_format(aMsg, sizeof(aMsg), "Tuning %s synced with player %i (%s) (-> %.2f)", pParamName, Index, pSelf->Server()->ClientName(Index), Value);
+						pSelf->SendChatTarget(ClientId, aMsg);
+
+						pSelf->SendTuningParams(ClientId);
+					}
+				}
+				else if(pType[0] == 't')
+				{
+					if(pSelf->m_pController->Teams().GetTeamState(Index) == ETeamState::EMPTY)
+					{
+						str_format(aMsg, sizeof(aMsg), "Copying canceled because team %i is empty", Index);
+						pSelf->SendChatTarget(ClientId, aMsg);
+						return;
+					}
+					if(pSelf->Tuning(Index, false)->Get(pParamName, &Value) && pSelf->Tuning(Team, false)->Set(pParamName, Value))
+					{
+						str_format(aMsg, sizeof(aMsg), "%s of your team have been synced with team %i by %s (-> %.2f)", pParamName, Index, pSelf->Server()->ClientName(ClientId), Value);
+						pSelf->SendChatTeam(Team, aMsg);
+
+						pSelf->SendTuningParams(-1);
+					}
+				}
+				else
+				{
+					if(pType == "")
+						pSelf->SendChatTarget(ClientId, "Targeting mode requied (\"team\"\\\"player\")");
+					else
+					{
+						str_format(aMsg, sizeof(aMsg), "Invalid target mode: %s", pType);
+						pSelf->SendChatTarget(ClientId, aMsg);
+					}
+					return;
+				}
+			default:
+				break;
+			}
+		}	
 	}
 }
 
@@ -3745,10 +4601,9 @@ void CGameContext::OnConsoleInit()
 	m_pEngine = Kernel()->RequestInterface<IEngine>();
 	m_pStorage = Kernel()->RequestInterface<IStorage>();
 
-	Console()->Register("tune", "s[tuning] ?f[value]", CFGFLAG_SERVER | CFGFLAG_GAME, ConTuneParam, this, "Tune variable to value or show current value");
-	Console()->Register("toggle_tune", "s[tuning] f[value 1] f[value 2]", CFGFLAG_SERVER, ConToggleTuneParam, this, "Toggle tune variable");
+	Console()->Register("tune", "s[tuning] ?f[value] ?f[index] ?s[extType]", CFGFLAG_SERVER | CFGFLAG_GAME, ConTuneParam, this, "Tune variable to value or show current value of target specified by index and server multi tuning mode");
 	Console()->Register("tune_reset", "?s[tuning]", CFGFLAG_SERVER, ConTuneReset, this, "Reset all or one tuning variable to default");
-	Console()->Register("tunes", "", CFGFLAG_SERVER, ConTunes, this, "List all tuning variables and their values");
+	Console()->Register("tunedump", "", CFGFLAG_SERVER, ConTuneDump, this, "List all tuning variables and their values");
 	Console()->Register("tune_zone", "i[zone] s[tuning] f[value]", CFGFLAG_SERVER | CFGFLAG_GAME, ConTuneZone, this, "Tune in zone a variable to value");
 	Console()->Register("tune_zone_dump", "i[zone]", CFGFLAG_SERVER, ConTuneDumpZone, this, "Dump zone tuning in zone x");
 	Console()->Register("tune_zone_reset", "?i[zone]", CFGFLAG_SERVER, ConTuneResetZone, this, "Reset zone tuning in zone x or in all zones");
@@ -3915,6 +4770,9 @@ void CGameContext::RegisterChatCommands()
 	Console()->Register("invite", "r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConInvite, this, "Invite a person to a locked team");
 	Console()->Register("join", "r[player name]", CFGFLAG_CHAT | CFGFLAG_SERVER, ConJoin, this, "Join the team of the specified player");
 	Console()->Register("team0mode", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConTeam0Mode, this, "Toggle team between team 0 and team mode. This mode will make your team behave like team 0.");
+	Console()->Register("septune", "s[tuning] ?f[value] ?s[extType]", CFGFLAG_CHAT | CFGFLAG_GAME | CFGFLAG_SERVER, ConTuneChat, this, "Get or set your (team's) tuning params (player/team targeting need sepecified in extType when on mixed multi-tuning)");
+	Console()->Register("coptune", "?s[tuning] ?i[target] ?s[extType]", CFGFLAG_CHAT | CFGFLAG_GAME | CFGFLAG_SERVER, ConTuneCopy, this, "Sycn with your team's tuning or a specified target");
+	Console()->Register("restune", "?s[extType]", CFGFLAG_CHAT | CFGFLAG_GAME | CFGFLAG_SERVER, ConTuneResetChat, this, "Reset tuning by current multi-tuning mode");
 
 	Console()->Register("showothers", "?i['0'|'1'|'2']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConShowOthers, this, "Whether to show players from other teams or not (off by default), optional i = 0 for off, i = 1 for on, i = 2 for own team only");
 	Console()->Register("showall", "?i['0'|'1']", CFGFLAG_CHAT | CFGFLAG_SERVER, ConShowAll, this, "Whether to show players at any distance (off by default), optional i = 0 for off else for on");
@@ -3998,6 +4856,8 @@ void CGameContext::OnInit(const void *pPersistentData)
 	m_Collision.Init(&m_Layers);
 	m_World.m_pTuningList = m_aTuningList;
 	m_World.m_Core.InitSwitchers(m_Collision.m_HighestSwitchNumber);
+	
+	m_World.m_Core.m_pTeamTuning = m_aTeamTuning;
 
 	char aMapName[IO_MAX_PATH_LENGTH];
 	int MapSize;
@@ -4030,11 +4890,11 @@ void CGameContext::OnInit(const void *pPersistentData)
 	}
 	else
 	{
-		Tuning()->Set("gun_speed", 1400);
-		Tuning()->Set("gun_curvature", 0);
-		Tuning()->Set("shotgun_speed", 500);
-		Tuning()->Set("shotgun_speeddiff", 0);
-		Tuning()->Set("shotgun_curvature", 0);
+		TuningSet("gun_speed", 1400);
+		TuningSet("gun_curvature", 0);
+		TuningSet("shotgun_speed", 500);
+		TuningSet("shotgun_speeddiff", 0);
+		TuningSet("shotgun_curvature", 0);
 	}
 
 	if(g_Config.m_SvDDRaceTuneReset)
@@ -4058,7 +4918,7 @@ void CGameContext::OnInit(const void *pPersistentData)
 
 	LoadMapSettings();
 
-	m_pConfigManager->SetGameSettingsReadOnly(true);
+	// m_pConfigManager->SetGameSettingsReadOnly(true); Make life easier pls XD
 
 	m_MapBugs.Dump();
 
@@ -4067,8 +4927,8 @@ void CGameContext::OnInit(const void *pPersistentData)
 		g_Config.m_SvTeam = SV_TEAM_FORCED_SOLO;
 		g_Config.m_SvShowOthersDefault = SHOW_OTHERS_ON;
 
-		Tuning()->Set("player_collision", 0);
-		Tuning()->Set("player_hooking", 0);
+		TuningSet("player_collision", 0);
+		TuningSet("player_hooking", 0);
 
 		for(int i = 0; i < NUM_TUNEZONES; i++)
 		{
@@ -4126,7 +4986,7 @@ void CGameContext::OnInit(const void *pPersistentData)
 		GameInfo.m_pGameType = m_pController->m_pGameType;
 
 		GameInfo.m_pConfig = &g_Config;
-		GameInfo.m_pTuning = Tuning();
+		GameInfo.m_pTuning = Tuning(-1);
 		GameInfo.m_pUuids = &g_UuidManager;
 
 		GameInfo.m_pMapName = aMapName;
@@ -4204,7 +5064,7 @@ void CGameContext::CreateAllEntities(bool Initial)
 				}
 				else if(GameIndex == TILE_NPC)
 				{
-					m_Tuning.Set("player_collision", 0);
+					TuningSet("player_collision", 0);
 					dbg_msg("game_layer", "found no collision tile");
 				}
 				else if(GameIndex == TILE_EHOOK)
@@ -4219,7 +5079,7 @@ void CGameContext::CreateAllEntities(bool Initial)
 				}
 				else if(GameIndex == TILE_NPH)
 				{
-					m_Tuning.Set("player_hooking", 0);
+					TuningSet("player_hooking", 0);
 					dbg_msg("game_layer", "found no player hooking tile");
 				}
 				else if(GameIndex >= ENTITY_OFFSET)
@@ -4238,7 +5098,7 @@ void CGameContext::CreateAllEntities(bool Initial)
 				}
 				else if(FrontIndex == TILE_NPC)
 				{
-					m_Tuning.Set("player_collision", 0);
+					TuningSet("player_collision", 0);
 					dbg_msg("front_layer", "found no collision tile");
 				}
 				else if(FrontIndex == TILE_EHOOK)
@@ -4253,7 +5113,7 @@ void CGameContext::CreateAllEntities(bool Initial)
 				}
 				else if(FrontIndex == TILE_NPH)
 				{
-					m_Tuning.Set("player_hooking", 0);
+					TuningSet("player_hooking", 0);
 					dbg_msg("front_layer", "found no player hooking tile");
 				}
 				else if(FrontIndex >= ENTITY_OFFSET)
@@ -4502,11 +5362,11 @@ void CGameContext::OnSnap(int ClientId, bool GlobalSnap)
 	dbg_assert(!Server()->IsSixup(ClientId) || GlobalSnap, "sixup should only snap during global snap");
 
 	// add tuning to demo
-	if(Server()->IsRecording(ClientId > -1 ? ClientId : MAX_CLIENTS) && mem_comp(&CTuningParams::DEFAULT, &m_Tuning, sizeof(CTuningParams)) != 0)
+	if(Server()->IsRecording(ClientId > -1 ? ClientId : MAX_CLIENTS) && mem_comp(&CTuningParams::DEFAULT, Tuning(ClientId), sizeof(CTuningParams)) != 0)
 	{
 		CMsgPacker Msg(NETMSGTYPE_SV_TUNEPARAMS);
-		int *pParams = (int *)&m_Tuning;
-		for(unsigned i = 0; i < sizeof(m_Tuning) / sizeof(int); i++)
+		int *pParams = (int *)Tuning(ClientId);
+		for(unsigned i = 0; i < sizeof(CTuningParams) / sizeof(int); i++)
 			Msg.AddInt(pParams[i]);
 		Server()->SendMsg(&Msg, MSGFLAG_RECORD | MSGFLAG_NOSEND, ClientId);
 	}
@@ -4766,12 +5626,16 @@ int CGameContext::GetDDRaceTeam(int ClientId) const
 
 void CGameContext::ResetTuning()
 {
-	m_Tuning = CTuningParams::DEFAULT;
-	Tuning()->Set("gun_speed", 1400);
-	Tuning()->Set("gun_curvature", 0);
-	Tuning()->Set("shotgun_speed", 500);
-	Tuning()->Set("shotgun_speeddiff", 0);
-	Tuning()->Set("shotgun_curvature", 0);
+	for(int i = 0; i < NUM_DDRACE_TEAMS; i++)
+		mem_copy(&m_aTeamTuning[i], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+	for(int i = 0; i < MAX_CLIENTS; i++)
+		mem_copy(&m_aTuningList[i], &CTuningParams::DEFAULT, sizeof(CTuningParams));
+	TuningSetDefault(g_Config.m_SvMultiTuning == 3 ? true : false);
+	TuningSet("gun_speed", 1400);
+	TuningSet("gun_curvature", 0);
+	TuningSet("shotgun_speed", 500);
+	TuningSet("shotgun_speeddiff", 0);
+	TuningSet("shotgun_curvature", 0);
 	SendTuningParams(-1);
 }
 

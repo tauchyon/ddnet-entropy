@@ -137,6 +137,7 @@ enum
 enum
 {
 	NUM_TUNEZONES = 256,
+	NUM_PLAYERTUNE = NUM_TUNEZONES - MAX_CLIENTS,
 };
 
 typedef std::bitset<MAX_CLIENTS> CClientMask;

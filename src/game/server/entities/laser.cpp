@@ -57,7 +57,7 @@ bool CLaser::HitCharacter(vec2 From, vec2 To)
 	{
 		float Strength;
 		if(!m_TuneZone)
-			Strength = Tuning()->m_ShotgunStrength;
+			Strength = Tuning(m_Owner)->m_ShotgunStrength;
 		else
 			Strength = TuningList()[m_TuneZone].m_ShotgunStrength;
 
@@ -157,7 +157,7 @@ void CLaser::DoBounce()
 			}
 			else if(!m_TuneZone)
 			{
-				m_Energy -= Distance + Tuning()->m_LaserBounceCost;
+				m_Energy -= Distance + Tuning(m_Owner)->m_LaserBounceCost;
 			}
 			else
 			{
@@ -177,7 +177,7 @@ void CLaser::DoBounce()
 				m_WasTele = false;
 			}
 
-			int BounceNum = Tuning()->m_LaserBounceNum;
+			int BounceNum = Tuning(m_Owner)->m_LaserBounceNum;
 			if(m_TuneZone)
 				BounceNum = TuningList()[m_TuneZone].m_LaserBounceNum;
 
@@ -279,7 +279,7 @@ void CLaser::Tick()
 	if(m_TuneZone)
 		Delay = TuningList()[m_TuneZone].m_LaserBounceDelay;
 	else
-		Delay = Tuning()->m_LaserBounceDelay;
+		Delay = Tuning(m_Owner)->m_LaserBounceDelay;
 
 	if((Server()->Tick() - m_EvalTick) > (Server()->TickSpeed() * Delay / 1000.0f))
 		DoBounce();
