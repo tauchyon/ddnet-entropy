@@ -399,6 +399,7 @@ bool IGameController::OnEntity(int Index, int x, int y, int Layer, int Flags, bo
 void IGameController::OnPlayerConnect(CPlayer *pPlayer)
 {
 	int ClientId = pPlayer->GetCid();
+	mem_copy(&GameServer()->TuningList()[NUM_PLAYERTUNE + ClientId],GameServer()->Tuning(-1),sizeof(CTuneParam));
 	pPlayer->Respawn();
 
 	if(!Server()->ClientPrevIngame(ClientId))

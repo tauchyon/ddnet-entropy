@@ -136,8 +136,8 @@ void CGameContext::ConSettings(IConsole::IResult *pResult, void *pUserData)
 		char aBuf[256];
 		float ColTemp;
 		float HookTemp;
-		pSelf->m_Tuning.Get("player_collision", &ColTemp);
-		pSelf->m_Tuning.Get("player_hooking", &HookTemp);
+		pSelf->Tuning(-1)->Get("player_collision", &ColTemp);
+		pSelf->Tuning(-1)->Get("player_hooking", &HookTemp);
 		if(str_comp_nocase(pArg, "teams") == 0)
 		{
 			str_format(aBuf, sizeof(aBuf), "%s %s",
@@ -1129,7 +1129,7 @@ void CGameContext::UnlockTeam(int ClientId, int Team) const
 	SendChatTeam(Team, aBuf);
 }
 
-void CGameContext::AttemptJoinTeam(int ClientId, int Team)
+void CGameContext::AttemptJoinTeam(int ClientId, int Team, bool CopyTune)
 {
 	CPlayer *pPlayer = m_apPlayers[ClientId];
 	if(!pPlayer)

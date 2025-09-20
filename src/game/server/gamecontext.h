@@ -115,7 +115,7 @@ class CGameContext : public IGameServer
 	CCollision m_Collision;
 	protocol7::CNetObjHandler m_NetObjHandler7;
 	CNetObjHandler m_NetObjHandler;
-	CTuningParams m_Tuning;
+	CTuningParams m_aTeamTuning[NUM_DDRACE_TEAMS];
 	CTuningParams m_aTuningList[NUM_TUNEZONES];
 	std::vector<std::string> m_vCensorlist;
 
@@ -132,9 +132,11 @@ class CGameContext : public IGameServer
 	static void TeeHistorianWrite(const void *pData, int DataSize, void *pUser);
 
 	static void ConTuneParam(IConsole::IResult *pResult, void *pUserData);
-	static void ConToggleTuneParam(IConsole::IResult *pResult, void *pUserData);
 	static void ConTuneReset(IConsole::IResult *pResult, void *pUserData);
-	static void ConTunes(IConsole::IResult *pResult, void *pUserData);
+	static void ConTuneResetChat(IConsole::IResult *pResult, void *pUserData);
+	static void ConTuneDump(IConsole::IResult *pResult, void *pUserData);
+	static void ConTuneChat(IConsole::IResult *pResult, void *pUserData);
+	static void ConTuneCopy(IConsole::IResult *pResult, void *pUserData);
 	static void ConTuneZone(IConsole::IResult *pResult, void *pUserData);
 	static void ConTuneDumpZone(IConsole::IResult *pResult, void *pUserData);
 	static void ConTuneResetZone(IConsole::IResult *pResult, void *pUserData);
@@ -194,13 +196,22 @@ public:
 	IEngine *Engine() { return m_pEngine; }
 	IStorage *Storage() { return m_pStorage; }
 	CCollision *Collision() { return &m_Collision; }
-	CTuningParams *Tuning() { return &m_Tuning; }
 	CTuningParams *TuningList() { return &m_aTuningList[0]; }
 	IAntibot *Antibot() { return m_pAntibot; }
 	CTeeHistorian *TeeHistorian() { return &m_TeeHistorian; }
 	bool TeeHistorianActive() const { return m_TeeHistorianActive; }
 	CNetObjHandler *GetNetObjHandler() override { return &m_NetObjHandler; }
 	protocol7::CNetObjHandler *GetNetObjHandler7() override { return &m_NetObjHandler7; }
+
+	CTuningParams *Tuning(int Index, bool IsClientId = true);
+	bool DetermineTuning(int ClientId);
+	int TuningSetTeam(const char *pName, float Value, int Team, int Executor = -1);
+	int TuningSetPlayer(const char *pName, float Value, int Cid, bool Let = false);
+
+	void CopyToBase(const CTuningParams *pTuning);
+
+	bool TuningSet(const char *pName, float Value);
+	void TuningSetDefault(bool TeamOnly = false);
 
 	CGameContext();
 	CGameContext(int Reset);
@@ -216,6 +227,7 @@ public:
 	CSaveTeam *m_apSavedTeams[MAX_CLIENTS];
 	CSaveHotReloadTee *m_apSavedTees[MAX_CLIENTS];
 	int m_aTeamMapping[MAX_CLIENTS];
+	int m_prevMultiTuning;
 
 	// returns last input if available otherwise nulled PlayerInput object
 	// ClientId has to be valid
@@ -585,7 +597,7 @@ private:
 	void Converse(int ClientId, char *pStr);
 	bool IsVersionBanned(int Version);
 	void UnlockTeam(int ClientId, int Team) const;
-	void AttemptJoinTeam(int ClientId, int Team);
+	void AttemptJoinTeam(int ClientId, int Team, bool CopyTune = false);
 
 	enum
 	{

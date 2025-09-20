@@ -30,7 +30,8 @@ bool CTuningParams::Get(int Index, float *pValue) const
 {
 	if(Index < 0 || Index >= Num())
 		return false;
-	*pValue = (float)((CTuneParam *)this)[Index];
+	if(pValue)
+		*pValue = (float)((CTuneParam *)this)[Index];
 	return true;
 }
 

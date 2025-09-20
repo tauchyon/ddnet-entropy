@@ -779,3 +779,5 @@ MACRO_CONFIG_INT(ClVideoRecorderFPS, cl_video_recorder_fps, 60, 1, 1000, CFGFLAG
 /*
  * Add config variables for mods below this comment to avoid merge conflicts.
  */
+
+MACRO_CONFIG_INT(SvMultiTuning, sv_tunesep, 1, 0, 3, CFGFLAG_GAME | CFGFLAG_SERVER, "Switch the multi-tuning mode (0 = disabled, 1 = per-team tuning, 2 = per-player tuning, 3 = per-player over per-team tuning)")
