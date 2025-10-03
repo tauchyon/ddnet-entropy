@@ -182,6 +182,8 @@ void CCharacter::SetSuper(bool Super)
 
 	bool WasSuper = m_Core.m_Super;
 	m_Core.m_Super = Super;
+	m_Core.m_DeepFrozen = false;
+	m_Core.m_LiveFrozen = false;
 	if(Super && !WasSuper)
 	{
 		m_TeamBeforeSuper = Team();
