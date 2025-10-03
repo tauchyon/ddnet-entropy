@@ -1,4 +1,5 @@
-#include <game/editor/editor.h>
+#include "image.h"
+#include "sound.h"
 
 #include <engine/client.h>
 #include <engine/console.h>
@@ -9,11 +10,9 @@
 #include <engine/sound.h>
 #include <engine/storage.h>
 
+#include <game/editor/editor.h>
 #include <game/gamecore.h>
 #include <game/mapitems_ex.h>
-
-#include "image.h"
-#include "sound.h"
 
 // compatibility with old sound layers
 class CSoundSourceDeprecated
@@ -1051,10 +1050,7 @@ bool CEditorMap::Load(const char *pFileName, int StorageType, const std::functio
 
 	PerformSanityChecks(ErrorHandler);
 
-	m_Modified = false;
-	m_ModifiedAuto = false;
-	m_LastModifiedTime = -1.0f;
-	m_LastSaveTime = m_pEditor->Client()->GlobalTime();
+	ResetModifiedState();
 	return true;
 }
 
