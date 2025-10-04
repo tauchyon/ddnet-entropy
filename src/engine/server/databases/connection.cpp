@@ -5,10 +5,12 @@ IDbConnection::IDbConnection(const char *pPrefix)
 	str_copy(m_aPrefix, pPrefix);
 }
 
-void IDbConnection::FormatCreateRace(char *aBuf, unsigned int BufferSize, bool Backup) const
+// Modified :: pGame for different games (ddnet, gores, etc.)
+
+void IDbConnection::FormatCreateRace(char *aBuf, unsigned int BufferSize, bool Backup, const char *pGame) const
 {
 	str_format(aBuf, BufferSize,
-		"CREATE TABLE IF NOT EXISTS %s_race%s ("
+		"CREATE TABLE IF NOT EXISTS %s_%s_race%s ("
 		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
 		"  Name VARCHAR(%d) COLLATE %s NOT NULL, "
 		"  Timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
@@ -27,14 +29,14 @@ void IDbConnection::FormatCreateRace(char *aBuf, unsigned int BufferSize, bool B
 		"  DDNet7 BOOL DEFAULT FALSE, "
 		"  PRIMARY KEY (Map, Name, Time, Timestamp, Server)"
 		")",
-		GetPrefix(), Backup ? "_backup" : "",
+		GetPrefix(), pGame, Backup ? "_backup" : "",
 		BinaryCollate(), MAX_NAME_LENGTH_SQL, BinaryCollate());
 }
 
-void IDbConnection::FormatCreateTeamrace(char *aBuf, unsigned int BufferSize, const char *pIdType, bool Backup) const
+void IDbConnection::FormatCreateTeamrace(char *aBuf, unsigned int BufferSize, const char *pIdType, bool Backup, const char *pGame) const
 {
 	str_format(aBuf, BufferSize,
-		"CREATE TABLE IF NOT EXISTS %s_teamrace%s ("
+		"CREATE TABLE IF NOT EXISTS %s_%s_teamrace%s ("
 		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
 		"  Name VARCHAR(%d) COLLATE %s NOT NULL, "
 		"  Timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
@@ -44,14 +46,14 @@ void IDbConnection::FormatCreateTeamrace(char *aBuf, unsigned int BufferSize, co
 		"  DDNet7 BOOL DEFAULT FALSE, "
 		"  PRIMARY KEY (Id, Name)"
 		")",
-		GetPrefix(), Backup ? "_backup" : "",
+		GetPrefix(), pGame, Backup ? "_backup" : "",
 		BinaryCollate(), MAX_NAME_LENGTH_SQL, BinaryCollate(), pIdType);
 }
 
-void IDbConnection::FormatCreateMaps(char *aBuf, unsigned int BufferSize) const
+void IDbConnection::FormatCreateMaps(char *aBuf, unsigned int BufferSize, const char *pGame) const
 {
 	str_format(aBuf, BufferSize,
-		"CREATE TABLE IF NOT EXISTS %s_maps ("
+		"CREATE TABLE IF NOT EXISTS %s_%s_maps ("
 		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
 		"  Server VARCHAR(32) COLLATE %s NOT NULL, "
 		"  Mapper VARCHAR(128) COLLATE %s NOT NULL, "
@@ -60,7 +62,7 @@ void IDbConnection::FormatCreateMaps(char *aBuf, unsigned int BufferSize) const
 		"  Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
 		"  PRIMARY KEY (Map)"
 		")",
-		GetPrefix(), BinaryCollate(), BinaryCollate(), BinaryCollate());
+		GetPrefix(), pGame, BinaryCollate(), BinaryCollate(), BinaryCollate());
 }
 
 void IDbConnection::FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool Backup) const
@@ -68,6 +70,7 @@ void IDbConnection::FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool 
 	str_format(aBuf, BufferSize,
 		"CREATE TABLE IF NOT EXISTS %s_saves%s ("
 		"  Savegame TEXT COLLATE %s NOT NULL, "
+		"  Gamemode VARCHAR(32) NOT NULL, "
 		"  Map VARCHAR(128) COLLATE %s NOT NULL, "
 		"  Code VARCHAR(128) COLLATE %s NOT NULL, "
 		"  Timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
@@ -80,13 +83,13 @@ void IDbConnection::FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool 
 		BinaryCollate(), BinaryCollate(), BinaryCollate());
 }
 
-void IDbConnection::FormatCreatePoints(char *aBuf, unsigned int BufferSize) const
+void IDbConnection::FormatCreatePoints(char *aBuf, unsigned int BufferSize, const char *pGame) const
 {
 	str_format(aBuf, BufferSize,
-		"CREATE TABLE IF NOT EXISTS %s_points ("
+		"CREATE TABLE IF NOT EXISTS %s_%s_points ("
 		"  Name VARCHAR(%d) COLLATE %s NOT NULL, "
 		"  Points INT DEFAULT 0, "
 		"  PRIMARY KEY (Name)"
 		")",
-		GetPrefix(), MAX_NAME_LENGTH_SQL, BinaryCollate());
+		GetPrefix(), pGame,MAX_NAME_LENGTH_SQL, BinaryCollate());
 }

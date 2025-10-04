@@ -14,7 +14,7 @@
 
 enum
 {
-	MAX_PATHS = 16
+	MAX_PATHS = 255
 };
 
 class IStorage : public IInterface

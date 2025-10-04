@@ -91,13 +91,15 @@ public:
 
 private:
 	char m_aPrefix[64];
+	char m_aGame[32];
 
 protected:
-	void FormatCreateRace(char *aBuf, unsigned int BufferSize, bool Backup) const;
-	void FormatCreateTeamrace(char *aBuf, unsigned int BufferSize, const char *pIdType, bool Backup) const;
-	void FormatCreateMaps(char *aBuf, unsigned int BufferSize) const;
+	void FormatCreateRace(char *aBuf, unsigned int BufferSize, bool Backup, const char *pGame) const;
+	void FormatCreateTeamrace(char *aBuf, unsigned int BufferSize, const char *pIdType, bool Backup, const char *pGame) const;
+	void FormatCreateMaps(char *aBuf, unsigned int BufferSize, const char *pGame) const;
+	void FormatCreatePoints(char *aBuf, unsigned int BufferSize, const char *pGame) const;
 	void FormatCreateSaves(char *aBuf, unsigned int BufferSize, bool Backup) const;
-	void FormatCreatePoints(char *aBuf, unsigned int BufferSize) const;
+
 };
 
 bool MysqlAvailable();

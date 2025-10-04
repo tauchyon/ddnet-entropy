@@ -293,11 +293,14 @@ bool CMysqlConnection::ConnectImpl()
 		char aCreateMaps[1024];
 		char aCreateSaves[1024];
 		char aCreatePoints[1024];
-		FormatCreateRace(aCreateRace, sizeof(aCreateRace), /* Backup */ false);
-		FormatCreateTeamrace(aCreateTeamrace, sizeof(aCreateTeamrace), "VARBINARY(16)", /* Backup */ false);
-		FormatCreateMaps(aCreateMaps, sizeof(aCreateMaps));
-		FormatCreateSaves(aCreateSaves, sizeof(aCreateSaves), /* Backup */ false);
-		FormatCreatePoints(aCreatePoints, sizeof(aCreatePoints));
+		for(auto pGame : {"ddrace", "gores"})
+		{
+			FormatCreateRace(aCreateRace, sizeof(aCreateRace), /* Backup */ false, pGame);
+			FormatCreateTeamrace(aCreateTeamrace, sizeof(aCreateTeamrace), "VARBINARY(16)", /* Backup */ false, pGame);
+			FormatCreateMaps(aCreateMaps, sizeof(aCreateMaps), pGame);
+			FormatCreateSaves(aCreateSaves, sizeof(aCreateSaves), /* Backup */ false);
+			FormatCreatePoints(aCreatePoints, sizeof(aCreatePoints), pGame);
+		}
 
 		if(!PrepareAndExecuteStatement(aCreateRace) ||
 			!PrepareAndExecuteStatement(aCreateTeamrace) ||

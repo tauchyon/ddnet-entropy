@@ -128,6 +128,8 @@ void CGameContext::Construct(int Resetting)
 
 	m_aDeleteTempfile[0] = 0;
 	m_TeeHistorianActive = false;
+
+	mem_zero(m_aPrevMode, sizeof(m_aPrevMode));
 }
 
 void CGameContext::Destruct(int Resetting)
@@ -181,6 +183,8 @@ void CGameContext::Clear()
 	CTuningParams Tuning = m_Tuning;
 	CMutes Mutes = m_Mutes;
 	CMutes VoteMutes = m_VoteMutes;
+	char aPrevMode[32];
+	str_copy(aPrevMode, m_aPrevMode);
 
 	m_Resetting = true;
 	this->~CGameContext();
@@ -193,12 +197,33 @@ void CGameContext::Clear()
 	m_Tuning = Tuning;
 	m_Mutes = Mutes;
 	m_VoteMutes = VoteMutes;
+	str_copy(m_aPrevMode, aPrevMode, sizeof(m_aPrevMode));
 }
 
 void CGameContext::TeeHistorianWrite(const void *pData, int DataSize, void *pUser)
 {
 	CGameContext *pSelf = (CGameContext *)pUser;
 	aio_write(pSelf->m_pTeeHistorianFile, pData, DataSize);
+}
+
+void CGameContext::ConGameMode(IConsole::IResult *pResult, void *pUserData)
+{
+	CGameContext *pSelf = (CGameContext *)pUserData;
+
+	const char *pGameType = pResult->GetString(0);
+	if(!pSelf->m_pController)
+	{
+		str_copy(pSelf->m_aPrevMode, pGameType);
+		return;
+	}
+	if(pSelf->m_pController->m_pGameType == pGameType)
+		return;
+	else
+	{
+		str_copy(pSelf->m_aPrevMode, pGameType);
+		pSelf->m_pController->m_pGameType = pSelf->m_aPrevMode;
+		((CServer *)pSelf->m_pServer)->UpdateServerInfo(true);
+	}
 }
 
 void CGameContext::CommandCallback(int ClientId, int FlagMask, const char *pCmd, IConsole::IResult *pResult, void *pUser)
@@ -3772,6 +3797,8 @@ void CGameContext::OnConsoleInit()
 	Console()->Register("dump_antibot", "", CFGFLAG_SERVER | CFGFLAG_STORE, ConDumpAntibot, this, "Dumps the antibot status");
 	Console()->Register("antibot", "r[command]", CFGFLAG_SERVER | CFGFLAG_STORE, ConAntibot, this, "Sends a command to the antibot");
 
+	Console()->Register("sv_gamemode", "s[name]", CFGFLAG_SERVER , ConGameMode, this, "Set the game mode");
+
 	Console()->Chain("sv_motd", ConchainSpecialMotdupdate, this);
 
 	Console()->Chain("sv_vote_kick", ConchainSettingUpdate, this);
@@ -4485,7 +4512,7 @@ void CGameContext::LoadMapSettings()
 	}
 
 	char aBuf[IO_MAX_PATH_LENGTH];
-	str_format(aBuf, sizeof(aBuf), "maps/%s.map.cfg", g_Config.m_SvMap);
+	str_format(aBuf, sizeof(aBuf), "configs/%s.map.cfg", g_Config.m_SvMap);
 	Console()->ExecuteFile(aBuf, IConsole::CLIENT_ID_NO_GAME);
 }
 
