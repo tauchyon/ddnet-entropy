@@ -3378,6 +3378,7 @@ void CGameContext::AddVote(const char *pDescription, const char *pCommand)
 	}
 	while(*pDescription == ' ')
 		pDescription++;
+	auto dbgl = str_length(pDescription);
 	if(str_length(pDescription) >= VOTE_DESC_LENGTH || *pDescription == 0)
 	{
 		char aBuf[256];
