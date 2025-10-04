@@ -81,6 +81,8 @@ protected:
 public:
 	const char *m_pGameType;
 
+	const char *Gamemode() const { return str_find_nocase(m_pGameType, "DDrace") ? "ddrace" : "gores"; }
+
 	IGameController(class CGameContext *pGameServer);
 	virtual ~IGameController();
 

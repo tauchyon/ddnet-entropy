@@ -78,7 +78,7 @@ private:
 };
 
 CSqliteConnection::CSqliteConnection(const char *pFilename, bool Setup) :
-	IDbConnection("record"),
+	IDbConnection("entropy"),
 	m_Setup(Setup),
 	m_pDb(nullptr),
 	m_pStmt(nullptr),
@@ -148,35 +148,38 @@ bool CSqliteConnection::ConnectImpl(char *pError, int ErrorSize)
 
 	if(m_Setup)
 	{
-		if(!Execute("PRAGMA journal_mode=WAL", pError, ErrorSize))
-			return false;
-		char aBuf[1024];
-		FormatCreateRace(aBuf, sizeof(aBuf), /* Backup */ false);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreateTeamrace(aBuf, sizeof(aBuf), "BLOB", /* Backup */ false);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreateMaps(aBuf, sizeof(aBuf));
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreateSaves(aBuf, sizeof(aBuf), /* Backup */ false);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreatePoints(aBuf, sizeof(aBuf));
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
+		for(auto pGame : {"ddrace", "gores"})
+		{
+			if(!Execute("PRAGMA journal_mode=WAL", pError, ErrorSize))
+				return false;
+			char aBuf[1024];
+			FormatCreateRace(aBuf, sizeof(aBuf), /* Backup */ false, pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreateTeamrace(aBuf, sizeof(aBuf), "BLOB", /* Backup */ false, pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreateMaps(aBuf, sizeof(aBuf), pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreateSaves(aBuf, sizeof(aBuf), /* Backup */ false);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreatePoints(aBuf, sizeof(aBuf), pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
 
-		FormatCreateRace(aBuf, sizeof(aBuf), /* Backup */ true);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreateTeamrace(aBuf, sizeof(aBuf), "BLOB", /* Backup */ true);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		FormatCreateSaves(aBuf, sizeof(aBuf), /* Backup */ true);
-		if(!Execute(aBuf, pError, ErrorSize))
-			return false;
-		m_Setup = false;
+			FormatCreateRace(aBuf, sizeof(aBuf), /* Backup */ true, pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreateTeamrace(aBuf, sizeof(aBuf), "BLOB", /* Backup */ true, pGame);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			FormatCreateSaves(aBuf, sizeof(aBuf), /* Backup */ true);
+			if(!Execute(aBuf, pError, ErrorSize))
+				return false;
+			m_Setup = false;
+		}
 	}
 	return true;
 }

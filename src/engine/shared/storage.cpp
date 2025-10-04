@@ -192,7 +192,39 @@ public:
 			return false;
 		}
 
-		if(!str_comp(pPath, "$USERDIR"))
+		// Helper to join base + suffix correctly into outBuf
+		auto JoinBaseAndSuffix = [](const char *base, const char *suffix, char *outBuf, unsigned outSize) {
+			str_copy(outBuf, base, outSize);
+			// determine if need to insert a '/'
+			bool baseEndsWithSep = false;
+			int baseLen = str_length(base);
+			if(baseLen > 0)
+			{
+				char last = base[baseLen - 1];
+				if(last == '/' || last == '\\')
+					baseEndsWithSep = true;
+			}
+			if(suffix[0] == '/' || suffix[0] == '\\')
+			{
+				// suffix already has separator, just append
+				str_append(outBuf, suffix, outSize);
+			}
+			else
+			{
+				// insert separator if base doesn't end with one
+				if(!baseEndsWithSep)
+					str_append(outBuf, "/", outSize);
+				str_append(outBuf, suffix, outSize);
+			}
+		};
+
+		// Tokens to handle
+		const char *pUserTok = "$USERDIR";
+		const char *pDataTok = "$DATADIR";
+		const char *pCurrTok = "$CURRENTDIR";
+
+		// 1) Exact matches: keep original behavior for exact tokens
+		if(!str_comp(pPath, pUserTok))
 		{
 			if(m_aUserdir[0])
 			{
@@ -206,7 +238,7 @@ public:
 				return false;
 			}
 		}
-		else if(!str_comp(pPath, "$DATADIR"))
+		else if(!str_comp(pPath, pDataTok))
 		{
 			if(m_aDatadir[0])
 			{
@@ -220,13 +252,100 @@ public:
 				return false;
 			}
 		}
-		else if(!str_comp(pPath, "$CURRENTDIR"))
+		else if(!str_comp(pPath, pCurrTok))
 		{
+			// Keep previous special behavior: empty string represents current directory
 			m_aaStoragePaths[m_NumPaths++][0] = '\0';
 			log_info("storage", "added path '$CURRENTDIR' ('%s')", m_aCurrentdir);
 			return true;
 		}
-		else if(str_utf8_check(pPath))
+
+		// 2) Prefix matches: replace token at head even when not standalone
+		if(str_startswith(pPath, pUserTok))
+		{
+			if(!m_aUserdir[0])
+			{
+				log_error("storage", "cannot add path '%s' because $USERDIR could not be determined", pPath);
+				return false;
+			}
+			const char *pSuffix = pPath + str_length(pUserTok);
+			char aFinal[IO_MAX_PATH_LENGTH];
+			JoinBaseAndSuffix(m_aUserdir, pSuffix, aFinal, sizeof(aFinal));
+			if(!str_utf8_check(aFinal))
+			{
+				log_error("storage", "cannot add path '%s', which is not valid UTF-8 after expansion", aFinal);
+				return false;
+			}
+			if(fs_is_dir(aFinal))
+			{
+				str_copy(m_aaStoragePaths[m_NumPaths++], aFinal);
+				log_info("storage", "added path '%s' (expanded from '%s')", aFinal, pPath);
+				return true;
+			}
+			else
+			{
+				log_error("storage", "cannot add path '%s', which is not a directory after expansion", aFinal);
+				return false;
+			}
+		}
+		else if(str_startswith(pPath, pDataTok))
+		{
+			if(!m_aDatadir[0])
+			{
+				log_error("storage", "cannot add path '%s' because $DATADIR could not be determined", pPath);
+				return false;
+			}
+			const char *pSuffix = pPath + str_length(pDataTok);
+			char aFinal[IO_MAX_PATH_LENGTH];
+			JoinBaseAndSuffix(m_aDatadir, pSuffix, aFinal, sizeof(aFinal));
+			if(!str_utf8_check(aFinal))
+			{
+				log_error("storage", "cannot add path '%s', which is not valid UTF-8 after expansion", aFinal);
+				return false;
+			}
+			if(fs_is_dir(aFinal))
+			{
+				str_copy(m_aaStoragePaths[m_NumPaths++], aFinal);
+				log_info("storage", "added path '%s' (expanded from '%s')", aFinal, pPath);
+				return true;
+			}
+			else
+			{
+				log_error("storage", "cannot add path '%s', which is not a directory after expansion", aFinal);
+				return false;
+			}
+		}
+		else if(str_startswith(pPath, pCurrTok))
+		{
+			// For prefix usage of $CURRENTDIR (e.g. "$CURRENTDIR/some"), expand to the actual current dir
+			if(!m_aCurrentdir[0])
+			{
+				log_error("storage", "cannot add path '%s' because $CURRENTDIR could not be determined", pPath);
+				return false;
+			}
+			const char *pSuffix = pPath + str_length(pCurrTok);
+			char aFinal[IO_MAX_PATH_LENGTH];
+			JoinBaseAndSuffix(m_aCurrentdir, pSuffix, aFinal, sizeof(aFinal));
+			if(!str_utf8_check(aFinal))
+			{
+				log_error("storage", "cannot add path '%s', which is not valid UTF-8 after expansion", aFinal);
+				return false;
+			}
+			if(fs_is_dir(aFinal))
+			{
+				str_copy(m_aaStoragePaths[m_NumPaths++], aFinal);
+				log_info("storage", "added path '%s' (expanded from '%s')", aFinal, pPath);
+				return true;
+			}
+			else
+			{
+				log_error("storage", "cannot add path '%s', which is not a directory after expansion", aFinal);
+				return false;
+			}
+		}
+
+		// 3) Fallback: regular path validation (unchanged)
+		if(str_utf8_check(pPath))
 		{
 			if(fs_is_dir(pPath))
 			{

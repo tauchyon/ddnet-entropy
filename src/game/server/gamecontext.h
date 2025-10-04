@@ -130,6 +130,7 @@ class CGameContext : public IGameServer
 
 	static void CommandCallback(int ClientId, int FlagMask, const char *pCmd, IConsole::IResult *pResult, void *pUser);
 	static void TeeHistorianWrite(const void *pData, int DataSize, void *pUser);
+	static void ConGameMode(IConsole::IResult *pResult, void *pUserData);
 
 	static void ConTuneParam(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleTuneParam(IConsole::IResult *pResult, void *pUserData);
@@ -215,6 +216,7 @@ public:
 	CSaveTeam *m_apSavedTeams[MAX_CLIENTS];
 	CSaveHotReloadTee *m_apSavedTees[MAX_CLIENTS];
 	int m_aTeamMapping[MAX_CLIENTS];
+	char m_aPrevMode[32];
 
 	// returns last input if available otherwise nulled PlayerInput object
 	// ClientId has to be valid
@@ -238,6 +240,7 @@ public:
 	int m_VoteCreator;
 	int m_VoteType;
 	int64_t m_VoteCloseTime;
+	//int64_t m_SpecialVoteDelay;
 	bool m_VoteUpdate;
 	int m_VotePos;
 	char m_aVoteDescription[VOTE_DESC_LENGTH];
